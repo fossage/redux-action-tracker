@@ -36,39 +36,41 @@ export async function activate(context: vscode.ExtensionContext) {
 	for(const fileDescriptor of files) {
 		const doc = await vscode.workspace.openTextDocument(fileDescriptor.path);
 		const text = doc.getText();
-		const lines = text.split('\n');
-		let cursor = 0;
+		
+		let cursor = -1;
+    let position = new vscode.Position(0,0);
+		let line = doc.lineAt(position);
 
-		for(let i = 0; i < lines.length; i++) {
-			const line = lines[i];
-			const matches = functionDeclarationRE.exec(line);
-			cursor += line.length;
-			if(!matches) {
-				continue;
-			}
+		while(line.lineNumber < doc.lineCount - 1) {
+			const matches = functionDeclarationRE.exec(line.text);
 
-			const typeMatch = text.slice(cursor).match(actionTypeRE);
-			
-			
-			if(typeMatch?.length) {
-				const actionCreatorName = matches[0].trim();
-				const type = typeMatch[0].trim();
+			if(matches) {
+				const typeMatch = text.slice(cursor).match(actionTypeRE);
 
-				actionCreators[actionCreatorName] = { type, usages: [] };
-
-				for(const usageFileDescriptor of usageFiles) {
-					const doc = await vscode.workspace.openTextDocument(usageFileDescriptor.path);
-					
-					let text = doc.getText();
-					let position = text.indexOf(type);
-
-					while(position !== -1) {
-						const pos = doc.positionAt(position);
-						actionCreators[actionCreatorName].usages.push({uri: usageFileDescriptor.path, line: pos.line, character: pos.character});
-						position = text.indexOf(type, position + type.length);
+				if(typeMatch?.length) {
+					const actionCreatorName = matches[0].trim();
+					const type = typeMatch[0].trim();
+	
+					actionCreators[actionCreatorName] = { type, usages: [] };
+	
+					for(const usageFileDescriptor of usageFiles) {
+						const doc = await vscode.workspace.openTextDocument(usageFileDescriptor.path);
+						
+						let text = doc.getText();
+						let position = text.indexOf(type);
+	
+						while(position !== -1) {
+							const pos = doc.positionAt(position);
+							actionCreators[actionCreatorName].usages.push({uri: usageFileDescriptor.path, line: pos.line, character: pos.character});
+							position = text.indexOf(type, position + type.length);
+						}
 					}
-				}
-			}			  
+				}	
+			}
+			
+			cursor += line.text.length + 1;
+			position = position.translate(1);
+			line = doc.lineAt(position);
 		}
 	}
 			
