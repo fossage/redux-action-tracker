@@ -2,7 +2,7 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 
-const findGlob = '**/action-creators.js';
+const findGlob = '**/action-creators{**/*, *}.js';
 const usagesGlob = '**/store/**/*.js';
 const functionDeclarationRE = /(?<=\bfunction\s+)\w+/;
 const actionTypeRE = /\s+(?<=return\s+\{[\w\s]+type:\s)[A-Z_]+/;
@@ -18,6 +18,7 @@ interface ActionCreators {
 	[key: string]: {
 		type: string;
 		usages: ActionTypeUsage[];
+		usagesPerUri: {[key: string]: number};
 	};
 }
 
@@ -27,12 +28,14 @@ let actionCreators: ActionCreators = {};
 // your extension is activated the very first time the command is executed
 export async function activate(context: vscode.ExtensionContext) {
 	const files = await vscode.workspace.findFiles(findGlob);
-	const usageFiles = await vscode.workspace.findFiles(usagesGlob);
+	let usageFiles = await vscode.workspace.findFiles(usagesGlob);
 
 	if(!files.length || !usageFiles.length) {
 		return;
 	}
 	
+  usageFiles = usageFiles.filter(file => !/(action-creators|-tests|types)(\/\w+)*\.js$/.test(file.path));
+
 	for(const fileDescriptor of files) {
 		const doc = await vscode.workspace.openTextDocument(fileDescriptor.path);
 		const text = doc.getText();
@@ -48,20 +51,38 @@ export async function activate(context: vscode.ExtensionContext) {
 				const typeMatch = text.slice(cursor).match(actionTypeRE);
 
 				if(typeMatch?.length) {
-					const actionCreatorName = matches[0].trim();
 					const type = typeMatch[0].trim();
-	
-					actionCreators[actionCreatorName] = { type, usages: [] };
+					const actionCreatorName = matches[0].trim();
 	
 					for(const usageFileDescriptor of usageFiles) {
 						const doc = await vscode.workspace.openTextDocument(usageFileDescriptor.path);
-						
-						let text = doc.getText();
+						const text = doc.getText();
+
 						let position = text.indexOf(type);
 	
 						while(position !== -1) {
+							if(!actionCreators[actionCreatorName]) {
+								actionCreators[actionCreatorName] = { 
+									type, 
+									usages: [], 
+									usagesPerUri: {} 
+								};
+							}
+
 							const pos = doc.positionAt(position);
-							actionCreators[actionCreatorName].usages.push({uri: usageFileDescriptor.path, line: pos.line, character: pos.character});
+							const uri = usageFileDescriptor.path;
+							const { usagesPerUri } = actionCreators[actionCreatorName];
+							usagesPerUri[uri] = usagesPerUri[uri] ? usagesPerUri[uri] + 1 : 1;
+
+							// skip the first usage as we assume that is the import of the action type
+							if(usagesPerUri[uri] > 1) {
+								actionCreators[actionCreatorName].usages.push({
+									uri, 
+									line: pos.line, 
+									character: pos.character
+								});
+							}
+
 							position = text.indexOf(type, position + type.length);
 						}
 					}
@@ -73,15 +94,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			line = doc.lineAt(position);
 		}
 	}
-			
-	const temp = actionCreators;
-	actionCreators = {};
-	Object.keys(temp).forEach(key => {
-		if(temp[key].usages.length) {
-			actionCreators[key] = temp[key];
-		}
-	});
-	
+
 	vscode.languages.registerHoverProvider('javascript', {
     provideHover(document, position, token) {
 			const wordRange = document.getWordRangeAtPosition(position);
@@ -103,18 +116,6 @@ export async function activate(context: vscode.ExtensionContext) {
       return new vscode.Hover(output);
     }
   });
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	let disposable = vscode.commands.registerCommand('extension.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello VS Code!');
-	});
-
-	context.subscriptions.push(disposable);
 }
 
 // this method is called when your extension is deactivated
