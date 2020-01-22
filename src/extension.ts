@@ -2,12 +2,6 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 
-const findGlob = '**/action-creators{**/*, *}.js';
-const usagesGlob = '**/store/**/*.js';
-const functionDeclarationRE = /(?<=\bfunction\s+)\w+/;
-const actionTypeRE = /\s+(?<=return\s+\{[\w\s]+type:\s)[A-Z_]+/;
-
-
 interface ActionTypeUsage {
 	uri: string;
 	line: number;
@@ -21,6 +15,15 @@ interface ActionCreators {
 		usagesPerUri: {[key: string]: number};
 	};
 }
+
+const findGlob = '**/action-creators{**/*, *}.js';
+const usagesGlob = '**/store/**/*.js';
+
+const functionDeclarationRE = /(?<=\bfunction\s+)\w+/;
+const actionTypeRE = /\s+(?<=return\s+\{[\w\s]+type:\s)[A-Z_]+/;
+const createActionCreatorRE = /createActionCreator\(/;
+const createActionCreatorTypeRE = /(?<=createActionCreator\(\s*)\w+/;
+const createActionCreatorNameRE = /(?<=const\s)\w+(?=\s=\screateActionCreator\(\s*\w+)/;
 
 let actionCreators: ActionCreators = {};
 
@@ -45,48 +48,62 @@ export async function activate(context: vscode.ExtensionContext) {
 		let line = doc.lineAt(position);
 
 		while(line.lineNumber < doc.lineCount - 1) {
-			const matches = functionDeclarationRE.exec(line.text);
+			let type;
+			let actionCreatorName;
 
-			if(matches) {
-				const typeMatch = text.slice(cursor).match(actionTypeRE);
+			const nextText = text.slice(cursor);
+			const functionDeclarationMatches = functionDeclarationRE.exec(line.text);
+			const createActionCreatorsMatches = createActionCreatorRE.test(line.text);
 
+			if(functionDeclarationMatches) {
+				const typeMatch = nextText.match(actionTypeRE);
+	
 				if(typeMatch?.length) {
-					const type = typeMatch[0].trim();
-					const actionCreatorName = matches[0].trim();
-	
-					for(const usageFileDescriptor of usageFiles) {
-						const doc = await vscode.workspace.openTextDocument(usageFileDescriptor.path);
-						const text = doc.getText();
-
-						let position = text.indexOf(type);
-	
-						while(position !== -1) {
-							if(!actionCreators[actionCreatorName]) {
-								actionCreators[actionCreatorName] = { 
-									type, 
-									usages: [], 
-									usagesPerUri: {} 
-								};
-							}
-
-							const pos = doc.positionAt(position);
-							const uri = usageFileDescriptor.path;
-							const { usagesPerUri } = actionCreators[actionCreatorName];
-							usagesPerUri[uri] = usagesPerUri[uri] ? usagesPerUri[uri] + 1 : 1;
-
-							// skip the first usage as we assume that is the import of the action type
-							if(usagesPerUri[uri] > 1) {
-								actionCreators[actionCreatorName].usages.push({
-									uri, 
-									line: pos.line, 
-									character: pos.character
-								});
-							}
-
-							position = text.indexOf(type, position + type.length);
-						}
-					}
+					type = typeMatch[0].trim();
+				  actionCreatorName = functionDeclarationMatches[0].trim();
 				}	
+			} else if(createActionCreatorsMatches) {
+				const typeMatch = nextText.match(createActionCreatorTypeRE);
+
+        if(typeMatch?.length) {
+					type = typeMatch[0].trim();
+					actionCreatorName = nextText.match(createActionCreatorNameRE)?.[0]?.trim();
+				}
+			}
+
+      if(type && actionCreatorName) {
+				for(const usageFileDescriptor of usageFiles) {
+					const doc = await vscode.workspace.openTextDocument(usageFileDescriptor.path);
+					const text = doc.getText();
+
+					let position = text.indexOf(type);
+
+					while(position !== -1) {
+						if(!actionCreators[actionCreatorName]) {
+							actionCreators[actionCreatorName] = { 
+								type, 
+								usages: [], 
+								usagesPerUri: {} 
+							};
+						}
+
+						const pos = doc.positionAt(position);
+						const uri = usageFileDescriptor.path;
+						const { usagesPerUri } = actionCreators[actionCreatorName];
+						usagesPerUri[uri] = usagesPerUri[uri] ? usagesPerUri[uri] + 1 : 1;
+
+						// skip the first usage as we assume that is the import of the action type
+						if(usagesPerUri[uri] > 1) {
+							actionCreators[actionCreatorName].usages.push({
+								uri, 
+								line: pos.line, 
+								character: pos.character
+							});
+						}
+
+						position = text.indexOf(type, position + type.length);
+					}
+				}
 			}
 			
 			cursor += line.text.length + 1;
